@@ -1,0 +1,3 @@
+# Thermaltake/Display Driver HID display (VID 5131, PID 2007)
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="5131", ATTRS{idProduct}=="2007", TAG+="uaccess"
+
