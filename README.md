@@ -55,6 +55,87 @@ CPU  51 C   6% | GPU  48 C   1% | RAM  44%
 
 Only run one controller instance at a time. Stop it with `Ctrl+C`.
 
+### Start automatically with Windows
+
+The included installer creates a hidden Task Scheduler task at user logon. It
+runs with highest privileges so the bundled HWiNFO helper can read Ryzen and
+Radeon sensors without requiring a UAC prompt after every sign-in.
+
+Run this once from PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install_windows_startup.ps1
+```
+
+Approve the UAC prompt. The installer starts the task immediately, and it will
+start automatically at future logons. Check it with:
+
+```powershell
+Get-ScheduledTask -TaskName "PC Display Control"
+```
+
+To stop the background controller and remove autostart:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\uninstall_windows_startup.ps1
+```
+
+### Manage the Windows startup task later
+
+The scheduled task is named `PC Display Control`. Open PowerShell as
+administrator before using these commands.
+
+Show its current state and last result:
+
+```powershell
+Get-ScheduledTask -TaskName "PC Display Control"
+Get-ScheduledTaskInfo -TaskName "PC Display Control"
+```
+
+Start it now:
+
+```powershell
+Start-ScheduledTask -TaskName "PC Display Control"
+```
+
+Stop the currently running controller, while keeping it enabled for the next
+logon:
+
+```powershell
+Stop-ScheduledTask -TaskName "PC Display Control"
+```
+
+Restart it:
+
+```powershell
+Stop-ScheduledTask -TaskName "PC Display Control"
+Start-ScheduledTask -TaskName "PC Display Control"
+```
+
+Disable automatic execution without deleting the task:
+
+```powershell
+Stop-ScheduledTask -TaskName "PC Display Control"
+Disable-ScheduledTask -TaskName "PC Display Control"
+```
+
+Enable automatic execution again and start it immediately:
+
+```powershell
+Enable-ScheduledTask -TaskName "PC Display Control"
+Start-ScheduledTask -TaskName "PC Display Control"
+```
+
+Remove the task permanently using the included script:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\uninstall_windows_startup.ps1
+```
+
+Stopping or disabling the task does not delete the controller or its settings.
+The uninstall script removes only the Task Scheduler entry; the repository
+files remain in place.
+
 ## Linux setup
 
 Install Python, pip, and the HID runtime package using your distribution's
