@@ -9,6 +9,59 @@ The packet layout is compatible with the 64-byte `Display Driver` report used
 by this device. The program continuously updates the display every 200 ms by
 default.
 
+## ❗ WINDOWS AUTOSTART & CONTROL ❗
+
+> [!IMPORTANT]
+> Open **PowerShell as Administrator** before running the task-control commands.
+> The scheduled task is named **`PC Display Control`**.
+
+### Install autostart
+
+Starts the controller immediately and automatically at every Windows logon:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install_windows_startup.ps1
+```
+
+### Start now
+
+```powershell
+Start-ScheduledTask -TaskName "PC Display Control"
+```
+
+### Stop now
+
+Stops the current background process but keeps autostart enabled:
+
+```powershell
+Stop-ScheduledTask -TaskName "PC Display Control"
+```
+
+### Disable autostart
+
+```powershell
+Stop-ScheduledTask -TaskName "PC Display Control"
+Disable-ScheduledTask -TaskName "PC Display Control"
+```
+
+### Enable autostart again
+
+```powershell
+Enable-ScheduledTask -TaskName "PC Display Control"
+Start-ScheduledTask -TaskName "PC Display Control"
+```
+
+### Remove autostart completely
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\uninstall_windows_startup.ps1
+```
+
+> [!NOTE]
+> Removing the task does not delete this repository or the controller. See
+> [Manage the Windows startup task later](#manage-the-windows-startup-task-later)
+> for status, restart, and troubleshooting commands.
+
 ## Supported sensors
 
 | Platform | CPU | GPU | Memory |
