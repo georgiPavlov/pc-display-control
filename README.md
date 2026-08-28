@@ -202,6 +202,11 @@ files remain in place.
 
 ## Linux setup
 
+> [!IMPORTANT]
+> See **[LINUX.md](LINUX.md)** for the complete Linux-only installation,
+> native AMD sensor setup, systemd autostart, service-control commands, logs,
+> and removal instructions.
+
 Install Python, pip, and the HID runtime package using your distribution's
 package manager.
 
