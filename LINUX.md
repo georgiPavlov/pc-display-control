@@ -1,5 +1,9 @@
 # Linux Installation, Running, and Autostart
 
+> [!TIP]
+> Using Bazzite? Follow the dedicated **[BAZZITE.md](BAZZITE.md)** guide for its
+> immutable Fedora Atomic base and Homebrew-based setup.
+
 PC Display Control does **not** require LibreHardwareMonitor, Display Driver, or
 another sensor application on Linux. It reads AMD sensors directly from the
 Linux kernel:

@@ -207,6 +207,11 @@ files remain in place.
 > native AMD sensor setup, systemd autostart, service-control commands, logs,
 > and removal instructions.
 
+> [!TIP]
+> Bazzite users should follow the dedicated **[BAZZITE.md](BAZZITE.md)** guide.
+> It avoids `rpm-ostree` package layering and uses Homebrew `uv`, a host udev
+> rule, and a systemd user service.
+
 Install Python, pip, and the HID runtime package using your distribution's
 package manager.
 
