@@ -19,6 +19,37 @@ The Linux kernel provides the sensor data:
 > `rpm-ostree install` or modify the immutable system image. It follows
 > Bazzite's recommendation to use Homebrew for command-line tools.
 
+## Quick automatic installation
+
+Clone the repository and run the included installer:
+
+```bash
+cd "$HOME"
+git clone https://github.com/georgiPavlov/pc-display-control.git
+cd pc-display-control
+chmod +x install_bazzite.sh
+./install_bazzite.sh
+```
+
+Enter your password when `sudo` installs the udev permission rule. The script:
+
+1. Confirms that the operating system is Bazzite.
+2. Installs `uv` through Homebrew if necessary.
+3. Creates `.venv` and installs the Python requirements.
+4. Installs and reloads the HID udev rule.
+5. Checks for `k10temp` and `amdgpu`.
+6. Creates, enables, and starts `pc-display-control.service`.
+7. Prints service status and useful management commands.
+
+If you are intentionally using a compatible non-Bazzite Atomic Fedora system,
+you can bypass the OS check with:
+
+```bash
+./install_bazzite.sh --force
+```
+
+Continue below for the manual procedure and detailed explanations.
+
 ## 1. Switch to Desktop Mode
 
 On a Bazzite HTPC or handheld installation, switch to Desktop Mode before
@@ -321,4 +352,3 @@ journalctl --user -u pc-display-control.service -n 50
 The repository, virtual environment, user service, and `/etc/udev/rules.d`
 rule persist across normal Bazzite image updates. No package layering is used,
 so the setup does not require rebuilding an `rpm-ostree` deployment.
-

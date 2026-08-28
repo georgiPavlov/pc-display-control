@@ -210,7 +210,8 @@ files remain in place.
 > [!TIP]
 > Bazzite users should follow the dedicated **[BAZZITE.md](BAZZITE.md)** guide.
 > It avoids `rpm-ostree` package layering and uses Homebrew `uv`, a host udev
-> rule, and a systemd user service.
+> rule, and a systemd user service. A one-command installer is included as
+> **[`install_bazzite.sh`](install_bazzite.sh)**.
 
 Install Python, pip, and the HID runtime package using your distribution's
 package manager.
