@@ -66,18 +66,28 @@ powershell -ExecutionPolicy Bypass -File .\uninstall_windows_startup.ps1
 
 | Platform | CPU | GPU | Memory |
 | --- | --- | --- | --- |
-| Windows | `psutil` utilization plus Display Driver's bundled HWiNFO helper for Ryzen temperature, power, clock, and fans | Bundled HWiNFO helper for Radeon temperature, utilization, power, clock, and fans | `psutil` |
+| Windows | `psutil` utilization plus LibreHardwareMonitor for Ryzen temperature, power, clock, and fans | LibreHardwareMonitor for Radeon temperature, utilization, power, clock, and fans | `psutil` |
 | Linux | `psutil` plus `k10temp` through `/sys/class/hwmon` | `amdgpu` through `/sys/class/hwmon` | `psutil` |
 
 The automatic backends are designed for AMD Ryzen and AMD Radeon hardware. The
 HID packet and manual-value mode do not depend on a particular CPU or GPU.
 
+Windows sensor access uses the official
+[LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor)
+release under its MPL-2.0 license. The installer downloads it directly from the
+project's GitHub release page; its binaries are not stored in this repository.
+
+> [!TIP]
+> After running `install_windows_startup.ps1`, the original Display Driver
+> application can be uninstalled. PC Display Control no longer reads or launches
+> any Display Driver files.
+
 ## Requirements
 
 - Python 3.10 or newer
 - A HID display with VID `5131` and PID `2007`
-- Windows: the vendor **Display Driver** installation for live temperature and
-  power sensors
+- Windows: administrator access during startup-task installation so the script
+  can download and use LibreHardwareMonitor
 - Linux: the `hidraw`, `k10temp`, and `amdgpu` kernel drivers
 
 ## Windows setup
@@ -89,16 +99,16 @@ py -m pip install -r requirements.txt
 ```
 
 For live Ryzen and Radeon temperatures, start PowerShell with **Run as
-administrator**. The bundled sensor helper requests elevation so it can access
-the hardware-monitoring driver.
+administrator**. LibreHardwareMonitor requires elevation to access low-level
+hardware sensors.
 
 ```powershell
 py .\pc_display_control.py --live
 ```
 
-Approve the Windows UAC prompt if it appears. The program reads the helper's
-shared-memory feed but sends HID packets itself, so the full Display Driver UI
-does not need to remain open.
+Approve the Windows UAC prompt if it appears. The Python process reads
+LibreHardwareMonitor directly and sends HID packets itself. The original
+Display Driver application is not required or used.
 
 Expected terminal output resembles:
 
@@ -110,9 +120,10 @@ Only run one controller instance at a time. Stop it with `Ctrl+C`.
 
 ### Start automatically with Windows
 
-The included installer creates a hidden Task Scheduler task at user logon. It
-runs with highest privileges so the bundled HWiNFO helper can read Ryzen and
-Radeon sensors without requiring a UAC prompt after every sign-in.
+The included installer downloads the official LibreHardwareMonitor release and
+creates a hidden Task Scheduler task at user logon. It runs with highest
+privileges so Ryzen and Radeon sensors work without a UAC prompt after every
+sign-in.
 
 Run this once from PowerShell:
 
@@ -278,25 +289,30 @@ python pc_display_control.py --temp 65 --gpu 55 --dry-run
 
 Run `python pc_display_control.py --help` for every option.
 
+Print one sensor snapshot without opening the HID display:
+
+```powershell
+py .\pc_display_control.py --show-sensors
+```
+
 ## Troubleshooting
 
 ### Temperatures show `0` on Windows
 
-Run PowerShell as administrator and approve UAC. Live temperature and power
-values depend on this signed helper:
+Re-run `install_windows_startup.ps1` and approve UAC. The installer downloads
+the official LibreHardwareMonitor release to:
 
 ```text
-C:\Program Files\Display Driver\resources\main\SDK\VC#\SystemInfos\vs2008\bin\x64\Release\SystemInfos.exe
+%LOCALAPPDATA%\PCDisplayControl\LibreHardwareMonitor
 ```
 
-If Display Driver previously crashed, it can leave a stale sensor file at
-`%TEMP%\Display_Driver_Thermaltake.bin`. Close all controller and Display Driver
-processes before removing that stale file and trying again.
+The task must run with highest privileges for Ryzen temperature and power
+sensors. Check that `pythonnet` is installed with `py -m pip show pythonnet`.
 
 ### HID write fails on Windows
 
-Close the Display Driver/Thermaltake UI and other copies of this controller.
-Only one process should write to the display.
+Close other display-control programs and other copies of this controller. Only
+one process should write to the display.
 
 ### Permission denied on Linux
 

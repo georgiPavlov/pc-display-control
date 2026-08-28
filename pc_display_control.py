@@ -1,8 +1,7 @@
 """Cross-platform live system monitor for VID 5131 / PID 2007 displays.
 
-This controller targets VID 5131 / PID 2007.  The packet layout is copied from
-Desktop/DisplayDriver_src/main/_baseClass/device_hid.js for a non-usage-page-12
-PID 2007 device.
+This controller targets VID 5131 / PID 2007 and implements its 64-byte
+Display Driver-compatible HID report.
 """
 
 from __future__ import annotations
@@ -13,8 +12,6 @@ import json
 import os
 from pathlib import Path
 import platform
-import struct
-import subprocess
 import sys
 import time
 
@@ -33,23 +30,6 @@ def read_number(path: Path, scale: float = 1.0) -> float | None:
         return None
 
 
-def first_sensor(data: dict, section: str, field: str, preferred: tuple[str, ...] = ()) -> float | None:
-    sensors = data.get(section, {}).get(f"{field}_list", [])
-    for needle in preferred:
-        for sensor in sensors:
-            if needle.lower() in str(sensor.get("sensorname", "")).lower():
-                try:
-                    return float(sensor["value"])
-                except (KeyError, TypeError, ValueError):
-                    pass
-    for sensor in sensors:
-        try:
-            return float(sensor["value"])
-        except (KeyError, TypeError, ValueError):
-            pass
-    return None
-
-
 class LiveSensors:
     """Cross-platform AMD sensor reader."""
 
@@ -60,62 +40,77 @@ class LiveSensors:
             raise RuntimeError("Live mode needs psutil: py -m pip install psutil") from error
         self.psutil = psutil
         self.windows = platform.system() == "Windows"
-        self.sensor_process: subprocess.Popen | None = None
-        self.last_warning = ""
-
-    def _windows_file(self) -> Path | None:
-        temp = Path(os.environ.get("TEMP", ""))
-        candidates = (
-            temp / "Display_Driver_Thermaltake.bin",
-            temp / "ThermaltakePublic.bin",
-            temp / "Thermaltake.bin",
-        )
-        return next((path for path in candidates if path.is_file()), None)
-
-    def _start_windows_helper(self) -> None:
-        if self.sensor_process is not None:
-            return
-        folder = Path(
-            r"C:\Program Files\Display Driver\resources\main\SDK\VC#\SystemInfos"
-            r"\vs2008\bin\x64\Release"
-        )
-        executable = folder / "SystemInfos.exe"
-        if not executable.is_file():
-            return
-        try:
-            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            self.sensor_process = subprocess.Popen(
-                [str(executable), "Display_Driver_Thermaltake"],
-                cwd=folder,
-                creationflags=flags,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            time.sleep(1.0)
-        except OSError:
-            self.sensor_process = None
-
-    def _windows_data(self) -> dict:
-        path = self._windows_file()
-        data = self._read_windows_file(path)
-        if not data or not self.psutil.pid_exists(int(data.get("pid", 0))):
-            self._start_windows_helper()
-            path = self._windows_file()
-            data = self._read_windows_file(path)
-        return data
+        self.lhm_computer = self._open_lhm() if self.windows else None
+        self.last_hardware_read = 0.0
+        self.windows_values: dict[str, float | None] = {}
 
     @staticmethod
-    def _read_windows_file(path: Path | None) -> dict:
-        if path is None:
-            return {}
+    def _open_lhm():
+        folder = Path(os.environ.get("LOCALAPPDATA", "")) / "PCDisplayControl" / "LibreHardwareMonitor"
+        assembly = folder / "LibreHardwareMonitorLib.dll"
+        if not assembly.is_file():
+            raise RuntimeError(
+                "LibreHardwareMonitor is not installed. Run install_windows_startup.ps1 first."
+            )
         try:
-            raw = path.read_bytes()
-            length = struct.unpack_from("<I", raw)[0]
-            if not 0 < length <= len(raw) - 4:
-                return {}
-            return json.loads(raw[4:4 + length].decode("utf-8"))
-        except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError, struct.error):
-            return {}
+            sys.path.insert(0, str(folder))
+            previous_directory = Path.cwd()
+            os.chdir(folder)
+            try:
+                import clr
+                clr.AddReference(str(assembly))
+                from LibreHardwareMonitor.Hardware import Computer
+
+                computer = Computer()
+                computer.IsCpuEnabled = True
+                computer.IsGpuEnabled = True
+                computer.IsMotherboardEnabled = True
+                computer.Open()
+            finally:
+                os.chdir(previous_directory)
+            time.sleep(1.0)
+            return computer
+        except Exception as error:
+            raise RuntimeError(
+                "Could not initialize LibreHardwareMonitor. Run Windows setup as administrator: "
+                f"{error}"
+            ) from error
+
+    def _lhm_sensors(self) -> list[tuple[str, str, str, float]]:
+        sensors: list[tuple[str, str, str, float]] = []
+
+        def visit(hardware, group: str) -> None:
+            hardware.Update()
+            for sensor in hardware.Sensors:
+                if sensor.Value is not None:
+                    sensors.append((group, str(sensor.Name), str(sensor.SensorType), float(sensor.Value)))
+            for child in hardware.SubHardware:
+                visit(child, group)
+
+        for hardware in self.lhm_computer.Hardware:
+            hardware_type = str(hardware.HardwareType).lower()
+            if "cpu" in hardware_type:
+                group = "cpu"
+            elif "gpu" in hardware_type:
+                group = "gpu"
+            else:
+                group = "board"
+            visit(hardware, group)
+        return sensors
+
+    @staticmethod
+    def _lhm_value(
+        sensors: list[tuple[str, str, str, float]],
+        group: str,
+        sensor_type: str,
+        preferred: tuple[str, ...],
+    ) -> float | None:
+        matching = [item for item in sensors if item[0] == group and item[2].lower() == sensor_type.lower()]
+        for needle in preferred:
+            for _, name, _, value in matching:
+                if needle.lower() in name.lower():
+                    return value
+        return matching[0][3] if matching else None
 
     @staticmethod
     def _hwmon_devices() -> list[tuple[str, Path]]:
@@ -154,17 +149,20 @@ class LiveSensors:
             values["cpu_clock"] = cpu_freq.current
 
         if self.windows:
-            data = self._windows_data()
-            values.update({
-                "temp": first_sensor(data, "cpuLayout", "temperature", ("tctl/tdie", "cpu die", "cpu (tctl")),
-                "gpu": first_sensor(data, "graphics", "temperature", ("gpu temperature", "gpu hot spot")),
-                "gpu_util": first_sensor(data, "graphics", "utilization", ("gpu d3d usage", "gpu utilization")),
-                "cpu_power": first_sensor(data, "cpuLayout", "powerDraw", ("cpu package power",)),
-                "gpu_power": first_sensor(data, "graphics", "powerDraw", ("gpu asic power", "total board power")),
-                "gpu_clock": first_sensor(data, "graphics", "currentRefreshRate", ("gpu clock",)),
-                "gpu_fan": first_sensor(data, "graphics", "fanSpeed", ("gpu fan",)),
-                "fan": first_sensor(data, "fanLayout", "fanSpeed", ("system", "chassis")),
-            })
+            if time.monotonic() - self.last_hardware_read >= 1.0:
+                sensors = self._lhm_sensors()
+                self.windows_values = {
+                    "temp": self._lhm_value(sensors, "cpu", "Temperature", ("tctl/tdie", "package", "core")),
+                    "gpu": self._lhm_value(sensors, "gpu", "Temperature", ("gpu core", "gpu temperature", "hot spot")),
+                    "gpu_util": self._lhm_value(sensors, "gpu", "Load", ("gpu core", "d3d 3d", "total")),
+                    "cpu_power": self._lhm_value(sensors, "cpu", "Power", ("package", "cores")),
+                    "gpu_power": self._lhm_value(sensors, "gpu", "Power", ("gpu package", "total")),
+                    "gpu_clock": self._lhm_value(sensors, "gpu", "Clock", ("gpu core",)),
+                    "gpu_fan": self._lhm_value(sensors, "gpu", "Fan", ("gpu fan",)),
+                    "fan": self._lhm_value(sensors, "board", "Fan", ("system", "chassis", "cpu")),
+                }
+                self.last_hardware_read = time.monotonic()
+            values.update(self.windows_values)
         else:
             for name, folder in self._hwmon_devices():
                 if name == "k10temp":
@@ -182,8 +180,8 @@ class LiveSensors:
                 for key, value in values.items()}
 
     def close(self) -> None:
-        if self.sensor_process and self.sensor_process.poll() is None:
-            self.sensor_process.terminate()
+        if self.lhm_computer is not None:
+            self.lhm_computer.Close()
 
 
 def byte_value(value: int, name: str) -> int:
@@ -270,6 +268,10 @@ def parse_args() -> argparse.Namespace:
         description="Send one DisplayDriver-compatible report to VID 5131 / PID 2007."
     )
     parser.add_argument("--live", action="store_true", help="fetch live Ryzen/Radeon sensor values")
+    parser.add_argument(
+        "--show-sensors", action="store_true",
+        help="print one live sensor snapshot as JSON without opening the HID device",
+    )
     parser.add_argument("--temp", type=int, help="CPU temperature override in Celsius")
     parser.add_argument("--gpu", type=int, help="GPU temperature override in Celsius")
     parser.add_argument("--cpu-util", type=int, help="CPU utilization override")
@@ -298,6 +300,17 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+
+    if args.show_sensors:
+        try:
+            sensors = LiveSensors()
+            print(json.dumps(sensors.read(), indent=2))
+            sensors.close()
+            return 0
+        except RuntimeError as error:
+            print(f"Error: {error}", file=sys.stderr)
+            return 2
+
     devices = matching_devices()
     metric_names = (
         "temp", "gpu", "cpu_util", "gpu_util", "cpu_power", "gpu_power",
