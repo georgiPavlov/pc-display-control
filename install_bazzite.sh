@@ -97,13 +97,14 @@ trap 'rm -f -- "$TEMP_SERVICE"' EXIT
 printf '%s\n' \
     '[Unit]' \
     'Description=PC Display Control for HID 5131:2007' \
-    'After=graphical-session.target' \
+    '# Bazzite may start directly in Gamescope/Gaming Mode.' \
     '' \
     '[Service]' \
     'Type=simple' \
-    "WorkingDirectory=\"$SCRIPT_DIR\"" \
-    "ExecStart=\"$PYTHON\" \"$CONTROLLER\" --live" \
-    'Restart=on-failure' \
+    "WorkingDirectory=$SCRIPT_DIR" \
+    "ExecStart=\"$PYTHON\" \"$CONTROLLER\" --live --wait-for-device" \
+    'Environment=PYTHONUNBUFFERED=1' \
+    'Restart=always' \
     'RestartSec=3' \
     '' \
     '[Install]' \
@@ -112,6 +113,9 @@ printf '%s\n' \
 install -m 0644 "$TEMP_SERVICE" "$SERVICE_FILE"
 systemctl --user daemon-reload
 systemctl --user enable --now "$TASK_NAME"
+
+log "Enabling user lingering for Gaming Mode"
+sudo loginctl enable-linger "$USER"
 
 log "Installation result"
 sleep 2

@@ -176,13 +176,14 @@ Paste this configuration:
 ```ini
 [Unit]
 Description=PC Display Control for HID 5131:2007
-After=graphical-session.target
+# Bazzite may start directly in Gamescope/Gaming Mode.
 
 [Service]
 Type=simple
 WorkingDirectory=%h/pc-display-control
-ExecStart=%h/pc-display-control/.venv/bin/python %h/pc-display-control/pc_display_control.py --live
-Restart=on-failure
+ExecStart=%h/pc-display-control/.venv/bin/python %h/pc-display-control/pc_display_control.py --live --wait-for-device
+Environment=PYTHONUNBUFFERED=1
+Restart=always
 RestartSec=3
 
 [Install]
@@ -194,6 +195,7 @@ Save the file, reload the user service manager, and enable the service:
 ```bash
 systemctl --user daemon-reload
 systemctl --user enable --now pc-display-control.service
+sudo loginctl enable-linger "$USER"
 ```
 
 The controller will now start automatically with your Bazzite user session.

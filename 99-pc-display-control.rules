@@ -1,3 +1,4 @@
-# Thermaltake/Display Driver HID display (VID 5131, PID 2007)
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="5131", ATTRS{idProduct}=="2007", TAG+="uaccess"
-
+# Thermaltake/Display Driver HID display (VID 5131, PID 2007).
+# uaccess covers desktop sessions; the narrow mode rule also covers Bazzite
+# Gamescope/Gaming Mode where a desktop-seat ACL may not yet exist.
+KERNEL=="hidraw*", ATTRS{idVendor}=="5131", ATTRS{idProduct}=="2007", MODE="0666", TAG+="uaccess"

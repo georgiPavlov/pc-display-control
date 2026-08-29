@@ -17,10 +17,21 @@ import time
 
 import hid
 
+if platform.system() == "Linux":
+    try:
+        import hidraw as hid_backend
+    except ImportError:
+        # Keep the import error useful on distributions that package hidraw
+        # separately; the libusb backend cannot open hid-generic interfaces.
+        hid_backend = hid
+else:
+    hid_backend = hid
+
 
 VID = 0x5131
 PID = 0x2007
 REPORT_LENGTH = 64
+LINUX_REPORT_ID = 0
 
 
 def read_number(path: Path, scale: float = 1.0) -> float | None:
@@ -124,17 +135,20 @@ class LiveSensors:
 
     @staticmethod
     def _labelled_value(folder: Path, prefix: str, labels: tuple[str, ...], scale: float) -> float | None:
-        for input_path in folder.glob(f"{prefix}*_input"):
-            label_path = input_path.with_name(input_path.name.replace("_input", "_label"))
-            try:
-                label = label_path.read_text().strip().lower()
-            except OSError:
-                label = ""
-            if any(item in label for item in labels):
-                value = read_number(input_path, scale)
-                if value is not None:
-                    return value
         inputs = list(folder.glob(f"{prefix}*_input"))
+        # Apply the preferred-label order before filesystem glob order. This
+        # matters on boards with several zero-valued system/pump tachometers.
+        for preferred in labels:
+            for input_path in inputs:
+                label_path = input_path.with_name(input_path.name.replace("_input", "_label"))
+                try:
+                    label = label_path.read_text().strip().lower()
+                except OSError:
+                    label = ""
+                if preferred in label:
+                    value = read_number(input_path, scale)
+                    if value is not None:
+                        return value
         return read_number(inputs[0], scale) if inputs else None
 
     def read(self) -> dict[str, int]:
@@ -174,6 +188,12 @@ class LiveSensors:
                     values["gpu_clock"] = read_number(folder / "freq1_input", 1_000_000)
                     fan = read_number(folder / "fan1_input")
                     values["gpu_fan"] = fan
+                elif name == "nct6687":
+                    # Common Bazzite desktop boards expose CPU/pump/system
+                    # tachometers through this Super-I/O hwmon driver.
+                    values["fan"] = self._labelled_value(
+                        folder, "fan", ("cpu", "pump", "system", "chassis"), 1
+                    )
 
         # Missing sensors remain zero; values are bounded to the packet fields.
         return {key: max(0, min(9999 if "clock" in key or "fan" in key else 255, round(value or 0)))
@@ -252,7 +272,17 @@ def make_packet(args: argparse.Namespace) -> bytearray:
 
 
 def matching_devices() -> list[dict]:
-    return hid.enumerate(VID, PID)
+    return hid_backend.enumerate(VID, PID)
+
+
+def wire_packet(packet: bytearray) -> bytes | bytearray:
+    """Return the platform-specific buffer expected by hidapi."""
+    if platform.system() == "Linux":
+        # hidraw requires a leading report-ID byte. The device uses ID 0;
+        # Linux's payload starts with 0, 1, 2 while Windows' 64-byte buffer
+        # includes the Windows-side leading 1. Keep the payload 64 bytes long.
+        return bytes((LINUX_REPORT_ID,)) + bytes(packet[1:]) + bytes((0,))
+    return packet
 
 
 def describe_device(index: int, info: dict) -> str:
@@ -268,6 +298,10 @@ def parse_args() -> argparse.Namespace:
         description="Send one DisplayDriver-compatible report to VID 5131 / PID 2007."
     )
     parser.add_argument("--live", action="store_true", help="fetch live Ryzen/Radeon sensor values")
+    parser.add_argument(
+        "--wait-for-device", action="store_true",
+        help="keep running and reconnect when the USB display is unavailable",
+    )
     parser.add_argument(
         "--show-sensors", action="store_true",
         help="print one live sensor snapshot as JSON without opening the HID device",
@@ -339,10 +373,10 @@ def main() -> int:
         print(packet.hex(" "))
         return 0
 
-    if not devices:
+    if not devices and not args.wait_for_device:
         print("Device VID 5131 / PID 2007 not found", file=sys.stderr)
         return 1
-    if not 0 <= args.device < len(devices):
+    if devices and not 0 <= args.device < len(devices):
         print(f"Device index {args.device} does not exist; use --list", file=sys.stderr)
         return 2
     if args.interval <= 0 or args.duration < 0:
@@ -357,24 +391,62 @@ def main() -> int:
             print(f"Error: {error}", file=sys.stderr)
             return 2
 
-    device = hid.device()
+    device = None
     try:
-        device.open_path(devices[args.device]["path"])
         started = time.monotonic()
         reports = 0
         last_status = 0.0
         while True:
+            if device is None:
+                devices = matching_devices()
+                if not devices:
+                    if not args.wait_for_device:
+                        print("Device VID 5131 / PID 2007 not found", file=sys.stderr)
+                        return 1
+                    time.sleep(2)
+                    continue
+                if not 0 <= args.device < len(devices):
+                    if not args.wait_for_device:
+                        print(f"Device index {args.device} does not exist; use --list", file=sys.stderr)
+                        return 2
+                    time.sleep(2)
+                    continue
+                candidate = hid_backend.device()
+                try:
+                    candidate.open_path(devices[args.device]["path"])
+                    device = candidate
+                    print("HID display connected.", file=sys.stderr)
+                except OSError as error:
+                    candidate.close()
+                    if not args.wait_for_device:
+                        raise error
+                    print(f"Waiting for HID display access: {error}", file=sys.stderr)
+                    time.sleep(2)
+                    continue
             if sensors:
                 live = sensors.read()
                 for name in metric_names:
                     setattr(args, name, overrides.get(name, live[name]))
             packet = make_packet(args)
-            written = device.write(packet)
-            # On Windows, hidapi commonly returns 65 for this 64-byte report:
-            # the count includes the report-ID byte/padded output report.
-            if written < len(packet):
-                print(f"Short HID write: {written} of at least {len(packet)} bytes", file=sys.stderr)
-                return 1
+            output = wire_packet(packet)
+            try:
+                written = device.write(output)
+            except OSError as error:
+                device.close()
+                device = None
+                if not args.wait_for_device:
+                    raise error
+                print(f"HID write failed; waiting to reconnect: {error}", file=sys.stderr)
+                time.sleep(2)
+                continue
+            if written < len(output):
+                print(f"Short HID write: {written} of {len(output)} bytes", file=sys.stderr)
+                device.close()
+                device = None
+                if not args.wait_for_device:
+                    return 1
+                time.sleep(2)
+                continue
             reports += 1
             if sensors and time.monotonic() - last_status >= 1:
                 print(
@@ -398,7 +470,8 @@ def main() -> int:
         )
         return 1
     finally:
-        device.close()
+        if device is not None:
+            device.close()
         if sensors:
             sensors.close()
 

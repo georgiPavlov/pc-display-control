@@ -99,6 +99,13 @@ cd "$HOME/pc-display-control"
 ./.venv/bin/python pc_display_control.py --live
 ```
 
+Use `--wait-for-device` for a background process that should survive a missing
+or unplugged display and reconnect automatically:
+
+```bash
+./.venv/bin/python pc_display_control.py --live --wait-for-device
+```
+
 Stop the foreground process with `Ctrl+C`.
 
 ## 6. Configure automatic startup with systemd
@@ -115,13 +122,14 @@ Paste this service definition:
 ```ini
 [Unit]
 Description=PC Display Control for HID 5131:2007
-After=graphical-session.target
+# Do not depend on a desktop target; this also runs in Bazzite Gaming Mode.
 
 [Service]
 Type=simple
 WorkingDirectory=%h/pc-display-control
-ExecStart=%h/pc-display-control/.venv/bin/python %h/pc-display-control/pc_display_control.py --live
-Restart=on-failure
+ExecStart=%h/pc-display-control/.venv/bin/python %h/pc-display-control/pc_display_control.py --live --wait-for-device
+Environment=PYTHONUNBUFFERED=1
+Restart=always
 RestartSec=3
 
 [Install]
@@ -133,6 +141,13 @@ Save the file, reload systemd, and enable the service:
 ```bash
 systemctl --user daemon-reload
 systemctl --user enable --now pc-display-control.service
+```
+
+On Bazzite, enable user lingering once so the service is available when the
+system enters Gamescope/Gaming Mode directly:
+
+```bash
+sudo loginctl enable-linger "$USER"
 ```
 
 The service will now start automatically when you sign in.
